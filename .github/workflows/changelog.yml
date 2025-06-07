@@ -1,0 +1,27 @@
+name: 📜 Auto Generate CHANGELOG
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Generate CHANGELOG.md
+        uses: heinrichreimer/action-github-changelog-generator@v2.3
+        env:
+          CHANGELOG_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and Push CHANGELOG.md
+        run: |
+          git config --global user.email "bot@stockfishgpt.ai"
+          git config --global user.name "StockfishGPT Bot"
+          git add CHANGELOG.md
+          git commit -m "📜 Auto-update CHANGELOG.md"
+          git push origin main
