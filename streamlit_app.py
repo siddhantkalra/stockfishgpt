@@ -6,6 +6,8 @@ import time
 import urllib.parse
 from io import StringIO
 from stockfish import Stockfish
+import streamlit.components.v1 as components
+import chess
 
 # === INIT OPENAI ===
 client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -17,7 +19,7 @@ EVAL_THRESHOLD_CP = 100
 GPT_MODEL = "gpt-4o"
 
 # === UI INIT ===
-st.set_page_config(page_title="♟️ StockfishGPT v1.9", layout="wide")
+st.set_page_config(page_title="♟️ StockfishGPT v1.9.1", layout="wide")
 st.title("♟️ StockfishGPT — Chess Game Analyzer with GPT Commentary")
 
 uploaded_file = st.file_uploader("📄 Upload a PGN File", type=["pgn"])
@@ -52,6 +54,12 @@ def build_piece_map(board):
         summary[color].setdefault(piece_type, []).append(square_name)
     return summary
 
+def render_chessboard_with_pgn(pgn_text):
+    with open("components/chessboard.html", "r") as file:
+        html_template = file.read()
+    html_filled = html_template.replace("{{PGN}}", pgn_text.replace("\n", " "))
+    components.html(html_filled, height=500)
+
 # === GAME ANALYSIS ===
 def analyze_game(pgn_text):
     game = chess.pgn.read_game(StringIO(pgn_text))
@@ -75,6 +83,8 @@ def analyze_game(pgn_text):
             if cp_loss >= EVAL_THRESHOLD_CP:
                 move_info = format_move_info(move_number, move, evaluation, best_move, fen)
                 move_info["piece_map"] = build_piece_map(board)
+                move_info["turn"] = "White" if board.turn else "Black"
+                move_info["last_move"] = move.uci()
                 analysis.append(move_info)
 
         previous_cp = current_cp
@@ -82,7 +92,7 @@ def analyze_game(pgn_text):
 
     return analysis, game
 
-# === GPT COMMENTARY (NOW FEN + PIECE MAP) ===
+# === GPT COMMENTARY (ENHANCED PROMPT) ===
 def generate_commentary(move_info, retries=3):
     piece_map = move_info["piece_map"]
     piece_text = "\n".join(
@@ -98,6 +108,9 @@ FEN: {move_info['fen']}
 Move played: {move_info['move']}
 Stockfish recommends: {move_info['best_move']}
 Evaluation: {move_info['evaluation']}
+Whose turn: {move_info['turn']}
+Move number: {move_info['move_number']}
+Last move played: {move_info['last_move']}
 
 Board State:
 {piece_text}
@@ -106,9 +119,9 @@ Write an explanation using this structure:
 - What was played
 - Why it’s inaccurate
 - What the engine suggests
-- Why it's stronger (based on piece positions)
+- Why it's stronger (based on piece positions and threats)
 
-Use clear chess logic without tactical hallucination.
+Be precise, avoid making up moves.
 """
 
     for attempt in range(retries):
@@ -149,19 +162,6 @@ Avoid tactical lines. Be strategic and human-readable.
     )
     return response.choices[0].message.content.strip()
 
-# === EMBED PGN IN LICHESS IFRAME ===
-def embed_lichess_board(pgn_text):
-    encoded_pgn = urllib.parse.quote(pgn_text)
-    html = f"""
-    <iframe
-        src="https://lichess.org/embed?theme=auto&bg=auto&pgn={encoded_pgn}"
-        width="600"
-        height="400"
-        frameborder="0">
-    </iframe>
-    """
-    st.components.v1.html(html, height=420)
-
 # === MAIN ===
 if uploaded_file:
     pgn_text = uploaded_file.read().decode("utf-8")
@@ -170,7 +170,7 @@ if uploaded_file:
         mistakes, game_obj = analyze_game(pgn_text)
 
     st.subheader("♟️ Full Game Viewer")
-    embed_lichess_board(pgn_text)
+    render_chessboard_with_pgn(pgn_text)
 
     st.subheader("⚠️ Mistakes & Inaccuracies")
     if not mistakes:
