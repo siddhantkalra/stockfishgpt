@@ -5,13 +5,18 @@ import openai
 import tempfile
 from stockfish import Stockfish
 
+# Set page config
 st.set_page_config(page_title="StockfishGPT", layout="wide")
 st.title("♟️ StockfishGPT")
 st.markdown("Upload a PGN file and get natural language commentary from GPT based on Stockfish analysis.")
 
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+# OpenAI client setup
+client = openai.OpenAI()
+
+# Setup Stockfish
 stockfish = Stockfish(path="./stockfish/stockfish", depth=15)
 
+# Upload file
 uploaded_file = st.file_uploader("Upload a PGN file", type="pgn")
 
 def analyze_game(pgn_text):
@@ -24,16 +29,18 @@ def analyze_game(pgn_text):
         fen = board.fen()
         stockfish.set_fen_position(fen)
         eval_info = stockfish.get_evaluation()
+
         if eval_info["type"] == "cp" and abs(eval_info["value"]) > 80:
-            comment_prompt = f"This is move {i} in a chess game. The move just played was {board.peek()}. " \
-                             f"Stockfish evaluation is {eval_info}. Please explain this move and why the evaluation is significant for a 1400-rated player."
-            response = openai.ChatCompletion.create(
+            comment_prompt = f"This is move {i}. The move just played was {board.peek()}. " \
+                             f"Stockfish evaluation is {eval_info}. Please explain this move for a 1400-rated player."
+            response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[{"role": "user", "content": comment_prompt}],
                 temperature=0.7,
                 max_tokens=200
             )
-            comments.append((i, board.peek().uci(), response['choices'][0]['message']['content']))
+            comment_text = response.choices[0].message.content
+            comments.append((i, board.peek().uci(), comment_text))
 
     return comments
 
