@@ -94,7 +94,7 @@ Explain to a 1400-rated player why this move was inaccurate, and what the better
 """
 
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=300,
