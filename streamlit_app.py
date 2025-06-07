@@ -1,57 +1,121 @@
-
 import streamlit as st
 import chess.pgn
+import chess.engine
+from io import StringIO
 import openai
+import os
 import tempfile
 from stockfish import Stockfish
 
-# Set page config
+# === LOAD API KEY FROM STREAMLIT SECRETS ===
+client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
+# === PATH TO STOCKFISH ===
+STOCKFISH_PATH = "./stockfish/stockfish"
+
+# === CONFIG ===
+EVAL_THRESHOLD_CP = 100  # Centipawn loss threshold to flag mistakes
+STOCKFISH_DEPTH = 15
+
+# === SET PAGE ===
 st.set_page_config(page_title="StockfishGPT", layout="wide")
-st.title("♟️ StockfishGPT")
-st.markdown("Upload a PGN file and get natural language commentary from GPT based on Stockfish analysis.")
+st.title("♟️ StockfishGPT — Chess Game Analyzer with GPT Commentary")
 
-# OpenAI client setup
-client = openai.OpenAI()
+# === FILE UPLOAD ===
+uploaded_file = st.file_uploader("Upload your PGN file", type=["pgn"])
 
-# Setup Stockfish
-stockfish = Stockfish(path="./stockfish/stockfish", depth=15)
+def run_stockfish_on_position(fen):
+    stockfish = Stockfish(STOCKFISH_PATH, depth=STOCKFISH_DEPTH)
+    stockfish.set_fen_position(fen)
+    evaluation = stockfish.get_evaluation()
+    best_move = stockfish.get_best_move()
+    return evaluation, best_move
 
-# Upload file
-uploaded_file = st.file_uploader("Upload a PGN file", type="pgn")
+def format_move_info(move_num, move, evaluation, best_move):
+    eval_value = evaluation.get("value", "N/A")
+    eval_type = evaluation.get("type", "cp")
+    eval_str = f"{eval_value} ({eval_type})"
+    return {
+        "move_number": move_num,
+        "move": move.uci(),
+        "evaluation": eval_str,
+        "best_move": best_move
+    }
 
 def analyze_game(pgn_text):
-    game = chess.pgn.read_game(pgn_text)
+    game = chess.pgn.read_game(StringIO(pgn_text))
     board = game.board()
-    comments = []
 
-    for i, move in enumerate(game.mainline_moves(), start=1):
+    analysis = []
+    previous_eval = None
+    move_number = 1
+
+    for move in game.mainline_moves():
         board.push(move)
         fen = board.fen()
-        stockfish.set_fen_position(fen)
-        eval_info = stockfish.get_evaluation()
+        evaluation, best_move = run_stockfish_on_position(fen)
 
-        if eval_info["type"] == "cp" and abs(eval_info["value"]) > 80:
-            comment_prompt = f"This is move {i}. The move just played was {board.peek()}. " \
-                             f"Stockfish evaluation is {eval_info}. Please explain this move for a 1400-rated player."
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": comment_prompt}],
-                temperature=0.7,
-                max_tokens=200
-            )
-            comment_text = response.choices[0].message.content
-            comments.append((i, board.peek().uci(), comment_text))
+        current_cp = evaluation.get("value")
+        current_type = evaluation.get("type")
 
-    return comments
+        if current_type == "mate":
+            move_number += 1
+            continue
 
-if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        tmp_file_path = tmp_file.name
+        if previous_eval is not None:
+            cp_loss = previous_eval - current_cp
+            if cp_loss >= EVAL_THRESHOLD_CP:
+                move_info = format_move_info(move_number, move, evaluation, best_move)
+                analysis.append(move_info)
 
-    with open(tmp_file_path, encoding='utf-8') as pgn_file:
-        comments = analyze_game(pgn_file)
+        previous_eval = current_cp
+        move_number += 1
 
-    for move_num, move, comment in comments:
-        st.markdown(f"### Move {move_num}: {move}")
-        st.markdown(comment)
+    return analysis
+
+def generate_commentary(move_info, pgn_text):
+    move_num = move_info["move_number"]
+    played = move_info["move"]
+    best = move_info["best_move"]
+    eval_info = move_info["evaluation"]
+
+    prompt = f"""
+You are a chess coach.
+
+A player played the move {played} on move {move_num}, but Stockfish suggests {best} would have been better.
+
+The evaluation for the move was: {eval_info}.
+
+The PGN of the full game is:
+
+{pgn_text}
+
+Explain to a 1400-rated player why this move was inaccurate, and what the better move would have done. Be clear, concise, and instructional.
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=300,
+    )
+
+    return response.choices[0].message.content.strip()
+
+# === MAIN APP LOGIC ===
+if uploaded_file:
+    pgn_text = uploaded_file.read().decode("utf-8")
+
+    with st.spinner("Analyzing game with Stockfish..."):
+        mistakes = analyze_game(pgn_text)
+
+    st.subheader("🔍 Mistakes / Inaccuracies Found")
+    if not mistakes:
+        st.success("No major inaccuracies detected based on current threshold.")
+    else:
+        for move_info in mistakes:
+            with st.expander(f"Move {move_info['move_number']}: {move_info['move']} → Suggested: {move_info['best_move']}"):
+                st.write(f"**Evaluation:** {move_info['evaluation']}")
+                with st.spinner("Generating commentary..."):
+                    comment = generate_commentary(move_info, pgn_text)
+                    st.markdown(comment)
