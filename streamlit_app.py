@@ -1,15 +1,16 @@
+# streamlit_app.py
+
 import streamlit as st
 import chess.pgn
 import openai
 import os
 import time
-import urllib.parse
+import json
 from io import StringIO
 from stockfish import Stockfish
 import streamlit.components.v1 as components
 import chess
 
-# === INIT OPENAI ===
 client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # === CONFIG ===
@@ -18,13 +19,17 @@ STOCKFISH_DEPTH = 15
 EVAL_THRESHOLD_CP = 100
 GPT_MODEL = "gpt-4o"
 
-# === UI INIT ===
-st.set_page_config(page_title="♟️ StockfishGPT v1.9.1", layout="wide")
+st.set_page_config(page_title="♟️ StockfishGPT v1.10", layout="wide")
 st.title("♟️ StockfishGPT — Chess Game Analyzer with GPT Commentary")
-
 uploaded_file = st.file_uploader("📄 Upload a PGN File", type=["pgn"])
 
-# === STOCKFISH ===
+def render_chessboard_with_pgn(pgn_text):
+    with open("components/chessboard.html", "r") as file:
+        html_template = file.read()
+    safe_pgn = json.dumps(pgn_text.replace("\n", " "))
+    html_filled = html_template.replace("{{PGN}}", safe_pgn)
+    components.html(html_filled, height=500)
+
 def run_stockfish_on_position(fen):
     stockfish = Stockfish(STOCKFISH_PATH, depth=STOCKFISH_DEPTH)
     stockfish.set_fen_position(fen)
@@ -54,13 +59,6 @@ def build_piece_map(board):
         summary[color].setdefault(piece_type, []).append(square_name)
     return summary
 
-def render_chessboard_with_pgn(pgn_text):
-    with open("components/chessboard.html", "r") as file:
-        html_template = file.read()
-    html_filled = html_template.replace("{{PGN}}", pgn_text.replace("\n", " "))
-    components.html(html_filled, height=500)
-
-# === GAME ANALYSIS ===
 def analyze_game(pgn_text):
     game = chess.pgn.read_game(StringIO(pgn_text))
     board = game.board()
@@ -92,7 +90,6 @@ def analyze_game(pgn_text):
 
     return analysis, game
 
-# === GPT COMMENTARY (ENHANCED PROMPT) ===
 def generate_commentary(move_info, retries=3):
     piece_map = move_info["piece_map"]
     piece_text = "\n".join(
@@ -102,26 +99,28 @@ def generate_commentary(move_info, retries=3):
     )
 
     prompt = f"""
-You are a chess coach helping a 1400-rated player improve.
+You are a chess coach analyzing a single move in the middle of a game. Your goal is to clearly explain the position to a 1400-rated player. Only use information provided.
 
-FEN: {move_info['fen']}
-Move played: {move_info['move']}
-Stockfish recommends: {move_info['best_move']}
-Evaluation: {move_info['evaluation']}
-Whose turn: {move_info['turn']}
-Move number: {move_info['move_number']}
+FEN before the move: {move_info['fen']}
+Move played: {move_info['move']}  (by {move_info['turn']})
+Best move suggested by Stockfish: {move_info['best_move']}
+Stockfish evaluation after the played move: {move_info['evaluation']}
 Last move played: {move_info['last_move']}
 
-Board State:
+Full piece map:
 {piece_text}
 
-Write an explanation using this structure:
-- What was played
-- Why it’s inaccurate
-- What the engine suggests
-- Why it's stronger (based on piece positions and threats)
+Instructions:
+- Don't assume which side is winning.
+- Only talk about what is visible from this board state.
+- Do NOT invent ideas unless they are grounded in this FEN or move.
+- Be extremely accurate when identifying which side played the move.
 
-Be precise, avoid making up moves.
+Structure your answer:
+1. ✅ What move was played and by whom
+2. ❌ Why it may be inaccurate
+3. 💡 What Stockfish suggests instead and why it’s stronger
+4. 🧠 Key learning tip based on this mistake
 """
 
     for attempt in range(retries):
@@ -138,7 +137,6 @@ Be precise, avoid making up moves.
 
     return "⚠️ GPT failed after retries."
 
-# === GPT GAME SUMMARY ===
 def generate_game_summary(game):
     pgn_data = str(game)
     summary_prompt = f"""
@@ -163,13 +161,15 @@ Avoid tactical lines. Be strategic and human-readable.
     return response.choices[0].message.content.strip()
 
 # === MAIN ===
+
+st.subheader("♟️ Full Game Viewer")
+
 if uploaded_file:
     pgn_text = uploaded_file.read().decode("utf-8")
 
     with st.spinner("🔍 Analyzing game..."):
         mistakes, game_obj = analyze_game(pgn_text)
 
-    st.subheader("♟️ Full Game Viewer")
     render_chessboard_with_pgn(pgn_text)
 
     st.subheader("⚠️ Mistakes & Inaccuracies")
@@ -187,3 +187,7 @@ if uploaded_file:
     with st.spinner("🧠 Generating strategic summary..."):
         game_summary = generate_game_summary(game_obj)
         st.markdown(game_summary)
+
+else:
+    st.info("👈 Upload a PGN file to analyze a game.")
+    render_chessboard_with_pgn("[Event \"Default Board\"]\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *")
