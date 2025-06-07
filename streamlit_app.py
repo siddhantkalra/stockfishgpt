@@ -26,8 +26,8 @@ uploaded_file = st.file_uploader("📄 Upload a PGN File", type=["pgn"])
 def render_chessboard_with_pgn(pgn_text):
     with open("components/chessboard.html", "r") as file:
         html_template = file.read()
-    safe_pgn = json.dumps(pgn_text.replace("\n", " "))
-    html_filled = html_template.replace("{{PGN}}", safe_pgn)
+    # Replace the exact placeholder string (with quotes)
+    html_filled = html_template.replace('"__PGN_PLACEHOLDER__"', json.dumps(pgn_text.replace("\n", " ")))
     components.html(html_filled, height=500)
 
 def run_stockfish_on_position(fen):
