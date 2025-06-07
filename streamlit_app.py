@@ -24,11 +24,15 @@ st.title("♟️ StockfishGPT — Chess Game Analyzer with GPT Commentary")
 uploaded_file = st.file_uploader("📄 Upload a PGN File", type=["pgn"])
 
 def render_chessboard_with_pgn(pgn_text):
+    import json
+    import streamlit.components.v1 as components
+
     with open("components/chessboard.html", "r") as file:
         html_template = file.read()
-    # Replace the exact placeholder string (with quotes)
-    html_filled = html_template.replace('"__PGN_PLACEHOLDER__"', json.dumps(pgn_text.replace("\n", " ")))
-    components.html(html_filled, height=500)
+
+    safe_pgn = json.dumps(pgn_text.replace("\n", " "))
+    html_filled = html_template.replace('"__PGN_PLACEHOLDER__"', safe_pgn)
+    components.html(html_filled, height=550)
 
 def run_stockfish_on_position(fen):
     stockfish = Stockfish(STOCKFISH_PATH, depth=STOCKFISH_DEPTH)
